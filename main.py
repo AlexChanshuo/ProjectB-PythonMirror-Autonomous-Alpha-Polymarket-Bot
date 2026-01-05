@@ -162,7 +162,7 @@ class DiscoveryEngine:
         self.tribunal = TribunalScorer()
         self.bankroll = 10000.0
         self.watchlist = [] # Validated Whales
-        log(f"v2.6.2 TRIBUNAL ONLINE. Risk Engine: KELLY ({KELLY_FRACTION}x).")
+        log(f"v2.6.5 TRIBUNAL ONLINE. Risk Engine: KELLY ({KELLY_FRACTION}x).")
 
     def run_tribunal_cycle(self):
         # 1. SCOUT: Find a new candidate
