@@ -10,23 +10,61 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-# --- 1. SHARED STATE (THE UPLINK) ---
+# --- 1. PERSISTENCE LAYER (THE BLACK BOX) ---
+class PersistenceManager:
+    FILE_NAME = "bot_memory.json"
+    
+    @staticmethod
+    def save(state_dict):
+        try:
+            with open(PersistenceManager.FILE_NAME, "w") as f:
+                json.dump(state_dict, f)
+        except Exception as e:
+            print(f"[ERROR] Failed to save memory: {e}")
+
+    @staticmethod
+    def load():
+        if os.path.exists(PersistenceManager.FILE_NAME):
+            try:
+                with open(PersistenceManager.FILE_NAME, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Failed to load memory: {e}")
+        return None
+
+# --- 2. SHARED STATE (THE UPLINK) ---
 class BotState:
     logs = []
     watchlist = [] 
     positions = []
     
+    def __init__(self):
+        # ATTEMPT TO RECOVER MEMORY ON STARTUP
+        saved_data = PersistenceManager.load()
+        if saved_data:
+            self.watchlist = saved_data.get("watchlist", [])
+            self.positions = saved_data.get("positions", [])
+            self.add_log("💾 [SYSTEM] MEMORY RECOVERED from previous session.", "SYSTEM")
+        else:
+            self.add_log("🆕 [SYSTEM] NO MEMORY FOUND. Starting fresh.", "SYSTEM")
+
+    def save_state(self):
+        # Save to disk whenever we update critical data
+        data = {
+            "watchlist": self.watchlist,
+            "positions": self.positions
+        }
+        PersistenceManager.save(data)
+    
     def add_log(self, msg, category="SYSTEM"):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        # Console print for Zeabur logs
         print(f"[{category}] {msg}", flush=True)
-        # Memory store for React Frontend
         self.logs.append({"timestamp": timestamp, "message": msg, "category": category})
         if len(self.logs) > 100: self.logs.pop(0)
 
 state = BotState()
 
-# --- 2. API SERVER ---
+# --- 3. API SERVER ---
 class APIHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/status':
@@ -53,7 +91,7 @@ def start_api_server():
 
 threading.Thread(target=start_api_server, daemon=True).start()
 
-# --- 3. RISK ENGINE (KELLY) ---
+# --- 4. RISK ENGINE (KELLY) ---
 class RiskManager:
     def __init__(self):
         self.KELLY_FRACTION = 0.5
@@ -69,7 +107,7 @@ class RiskManager:
         final_pct = min(safe_pct, self.MAX_BANKROLL_PCT)
         return max(0, bankroll * final_pct)
 
-# --- 4. TRIBUNAL SCORER (THE BRAIN) ---
+# --- 5. TRIBUNAL SCORER (THE BRAIN) ---
 class TribunalScorer:
     def calculate_score(self, trade_history):
         if not trade_history: return {'score': 0, 'status': 'NO_DATA'}
@@ -91,10 +129,10 @@ class TribunalScorer:
         sortino = df['roi'].mean() / downside if downside > 0 else 0
         
         # Final Score
-        raw_score = (min(sortino, 3) / 3) * 60 + 40 # Base 40 + up to 60 for skill
+        raw_score = (min(sortino, 3) / 3) * 60 + 40 
         return {'score': round(raw_score, 2), 'status': 'APPROVED' if raw_score > 70 else 'REJECTED'}
 
-# --- 5. PROFILE GENERATOR (SIMULATION) ---
+# --- 6. PROFILE GENERATOR (SIMULATION) ---
 class ProfileGenerator:
     @staticmethod
     def generate():
@@ -112,13 +150,13 @@ class ProfileGenerator:
             })
         return trades
 
-# --- 6. MAIN ENGINE ---
+# --- 7. MAIN ENGINE ---
 class DiscoveryEngine:
     def __init__(self):
         self.risk = RiskManager()
         self.tribunal = TribunalScorer()
         self.bankroll = 10000
-        state.add_log("v3.1.0 HYBRID ENGINE ONLINE", "SYSTEM")
+        state.add_log("v3.2.0 PERSISTENCE ENGINE ONLINE", "SYSTEM")
         
     def run(self):
         while True:
@@ -135,6 +173,7 @@ class DiscoveryEngine:
                     state.add_log(f"✅ [APPROVED] Score: {score}. Adding to Watchlist.", "SCANNER")
                     state.watchlist.append({'address': candidate, 'scoreA': score, 'pnl': 0})
                     if len(state.watchlist) > 8: state.watchlist.pop(0)
+                    state.save_state() # <--- SAVE TO DISK
                 else:
                     state.add_log(f"❌ [REJECTED] Reason: {result['status']}", "SCANNER")
             
@@ -147,9 +186,7 @@ class DiscoveryEngine:
                 
                 if size > 10:
                     state.add_log(f"🔴 LIVE SIGNAL: {whale['address']} bought 'Trump Winner'...", "EXECUTION")
-                    state.add_log(f"[KELLY] Size: ${size:.2f} (Prob: {prob:.2f}, Odds: {odds:.2f})", "EXECUTION")
                     
-                    # Add to positions for frontend
                     state.positions.append({
                         "id": str(int(time.time())),
                         "market": "Trump 2024 Election Winner",
@@ -162,6 +199,7 @@ class DiscoveryEngine:
                         "roi": 0,
                         "timestamp": int(time.time() * 1000)
                     })
+                    state.save_state() # <--- SAVE TO DISK
             
             time.sleep(2)
 
